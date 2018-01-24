@@ -1,4 +1,5 @@
 import pandas
+import numpy
 
 
 class WrongForeignKeyException(Exception):
@@ -50,7 +51,7 @@ class MinoRepo():
 
     @property
     def fact_fields(self):
-        return self._fact_table.columns.tolist()
+        return [x for x in self._fact_table.columns.tolist() if x.find(self._foreignKey_suffix) == -1]
 
     @property
     def ff(self):
@@ -70,20 +71,20 @@ class MinoRepo():
 
             for key in keys:
                 # for each key found we add it to the list with the table where we found it
-                if key.find(self._foreignKey_suffix):
+                if key.find(self._foreignKey_suffix) > -1:
                     if key in self.foreignKeys:
                         self.foreignKeys[key].append(d_table_name)
                     else:
                         l = [d_table_name]
                         self.foreignKeys[key] = l
 
-                #if it's not a foreign key its a dim field
+                # if it's not a foreign key its a dim field
                 else:
-                        if key in self.dim_fields:
-                            self.dim_fields[key].append(d_table_name)
-                        else:
-                            l = [d_table_name]
-                            self.dim_fields[key] = l
+                    if key in self.dim_fields:
+                        self.dim_fields[key].append(d_table_name)
+                    else:
+                        l = [d_table_name]
+                        self.dim_fields[key] = l
 
     # This method is used to fix the dim table list
     def __redo_dim_table(self):
@@ -117,7 +118,7 @@ class MinoRepo():
 
         # now we make sure we have all fields in the attributes
         # we do not include the foreign keys
-        __right_dim_fields = [x for x in __test_duplicates if not x.find('__FK__')]
+        __right_dim_fields = [x for x in __test_duplicates if x.find(self._foreignKey_suffix) == -1]
         __current_dim_fields = list(self.dim_fields.keys())
         # we sort them
         __right_dim_fields.sort()
@@ -138,18 +139,17 @@ class MinoRepo():
     def __get__next_foreign_key__(self):
         # if we have already keys, we need to sort tha last one out
         # if we do not have keys, we just return the first one
-        if len(self.foreignKeys.keys()) == 0:
-            foreign_key_next = 0
-        else:
-            key_list = list(self.foreignKeys.keys()).sort(reverse=True)
-            last_key = key_list[0].replace(self._foreignKey_suffix, '')
-            if not last_key.isnumeric():
-                raise WrongForeignKeyException
-            foreign_key_next = int(last_key) + 1
+        key_list = self.foreignKeys.keys()
+        last_key = 0
+        if len(key_list) > 0:
+            key_list = [int(x.replace(self._foreignKey_suffix, '')) for x in key_list]
+            key_list.sort(reverse=True)
+            last_key = key_list[0]
+        foreign_key_next = int(last_key) + 1
         return self._foreignKey_suffix + str(foreign_key_next).zfill(3)
 
     # This method updates the lists of the object
-    def __update_new_dim(self, dim_table_name, dim_table, foreign_key, fields_to_move, secondary = False):
+    def __update_new_dim(self, dim_table_name, dim_table, foreign_key, fields_to_move, secondary=False):
         # update the master tables
         self.master_tables[dim_table_name] = dim_table
         self.master_tables_names.append(dim_table_name)
@@ -178,7 +178,7 @@ class MinoRepo():
                 self.dim_fields[fields_to_move] = dim_table_name
 
     # Given a field name and a new table name this takes out the field and create a new table
-    def create_dim(self, fields_to_move, dim_table_name, debug=False, secondary = False):
+    def create_dim(self, fields_to_move, dim_table_name, debug=False, secondary=False):
         if not secondary:
             table_origin = self._fact_table
         else:
@@ -231,89 +231,95 @@ class MinoRepo():
         # Adding to lists
         self.__update_new_dim(dim_table_name, dim_table, foreign_key, fields_to_move, secondary)
 
-
     def full_thread(self, dim_table_name):
-        thread_down = self.thread_to_fact(dim_table_name)
+        thread_down = self.thread_to_fact(dim_table_name, self.master_tables[dim_table_name])
         ####pending
-        thread_up = [{'key':1,'table_name':'a'}]
+        thread_up = [{'key': 1, 'table_name': 'a'}]
 
-
-
-    def thread_to_fact(self,dim_table_name):
-        foreign_key = dim_table_name.index.name
+    def thread_to_fact(self, dim_table_name, dim_table):
+        foreign_key = dim_table.index.name
         fields = self.fact_table.columns.tolist()
-        keys = [x for x in fields if x.find(self._foreignKey_suffix)]
+        keys = [x for x in fields if x.find(self._foreignKey_suffix) > -1]
         if foreign_key in keys:
             # If the foreign key is on the fact and the table, distance is 1
-            thread = [{'key':foreign_key,'table_name' : dim_table_name}]
+            thread = [{'key': foreign_key, 'table_name': dim_table_name}]
             return thread
         # we need to repeat the process until we get to the table
         level = 1
         thread = [{'key': foreign_key, 'table_name': dim_table_name, 'level': level}]
-        tables = self.foreignKeys(foreign_key).remove(dim_table_name)
-        thread_append = self.thread_to_fact_recursive(tables_now = tables, keys_in_fact_table = keys, level_now = level)
+        tables = self.foreignKeys[foreign_key].copy()
+        print(tables)
+        tables = tables.remove(dim_table_name)
+        print(tables)
+        thread_append = self.thread_to_fact_recursive(tables, keys, level)
 
         return thread.append(thread_append)
 
     def thread_to_fact_recursive(self, tables, keys_in_fact_table, level):
-        level_now = level+1
+        level_now = level + 1
         thread_append = {}
         for dim_table_name in tables:
             foreign_key = dim_table_name.index.name
             fields = self.fact_table.columns.tolist()
             if foreign_key in keys_in_fact_table:
                 # If the foreign key is on the fact and the table, distance is 1
-                thread_append = {'key':foreign_key, 'table_name' : dim_table_name, 'level': level_now}
+                thread_append = {'key': foreign_key, 'table_name': dim_table_name, 'level': level_now}
                 return thread_append
             # we are only interested if the table is connected to other tables
-            elif len(self.foreignKeys(foreign_key)) > 1:
-                tables_now = self.foreignKeys(foreign_key).remove(dim_table_name)
+            elif len(self.foreignKeys[foreign_key]) > 1:
+                tables_now = self.foreignKeys(foreign_key).copy()
+                tables_now = tables_now.remove(dim_table_name)
                 thread_append = self.thread_to_fact_recursive(tables_now, keys_in_fact_table, level_now)
-                #if you have thread it means you found the fact table
-                if len(thread_append)>0:
-                    thread_append = thread_append.append({'key':foreign_key, 'table_name' : dim_table_name, 'level': level_now})
+                # if you have thread it means you found the fact table
+                if len(thread_append) > 0:
+                    thread_append = thread_append.append({'key': foreign_key, 'table_name': dim_table_name,
+                                                          'level': level_now})
                     return thread_append
-        # if we didn't find anything we retunr an empty thread
+        # if we didn't find anything we return an empty thread
         return thread_append
-
-
-
-
-
 
     ############FILTERING
     def __filter_one_dim__(self, filter_value, filter_field, negative=False, dim_fields_to_load=[]):
-        table_origin = self.master_tables[filter_field]
+        table_origin_name = self.dim_fields[filter_field]
+        table_origin = self.master_tables[table_origin_name]
         _foreign_key = table_origin.index.name
-        thread = self.thread_to_fact(table_origin)
+        thread = self.thread_to_fact(table_origin_name, table_origin)
 
-        filter_table = self.master_tables[table_origin]
+        filter_table = self.master_tables[table_origin_name]
+        filter_table = filter_table[filter_field]
         # We extract the foreign keys of the table
         # First we get the names
         # right now we only consider one index per table
         _foreign_key = filter_table.index.name
         # Now we get the submatrix that has the foreign keys as columns and the rows of the value we got
+        index_filter = numpy.nonzero(filter_table == filter_value)[0]
         if negative:
-            index_filter = filter_table.loc[filter_table[filter_field] != filter_value].index
-        else:
-            index_filter = filter_table.loc[filter_table[filter_field] == filter_value].index
-        filtered_list = []
+            index_filter = filter_table.index.drop(index_filter)
         fact_fields_to_load_list = self.fact_fields
 
         if len(dim_fields_to_load) > 0:
             fact_fields_to_load_list.append(_foreign_key)
+            tables = set([self.dim_fields[x] for x in dim_fields_to_load])
+            tables_d = {}
+            for i in tables:
+                tables_d[i] = [x for x in dim_fields_to_load if self.dim_fields[x] == i]
 
         fact_fields_to_load = chr(34) + '" , "'.join(fact_fields_to_load_list) + chr(34)
-        result = self._fact_table.loc[
-            self._fact_table[_foreign_key].map(lambda x: x in index_filter),
-            eval(fact_fields_to_load)]
-        result = result.join(filter_table[dim_fields_to_load], how='left')
+        fact_index_to_filter = numpy.isin(self._fact_table[_foreign_key], index_filter)
+        result = self._fact_table.loc[fact_index_to_filter, eval(fact_fields_to_load)]
+        if len(dim_fields_to_load) > 0:
+            print('adding dim columns is not yet well implemented')
+            for table_name in tables_d.keys():
+                table = self.master_tables[table_name]
+                fields_table = tables_d[table_name]
+                result = result.join(table[fields_table], on=table.index.name)
+            # result = result.join(filter_table[dim_fields_to_load], how='left')
         return result
 
-    def filter_facts(self, filter_value, filter_field, fields_to_load=[]):
+    def filter_facts(self, filter_value, filter_field, fields_to_load=[], negative = False):
         if filter_field.__class__ == list:
             print('Function not yet avalaible, please filter a single dim')
-        return self.__filter_one_dim__(filter_value, filter_field, dim_fields_to_load=fields_to_load)
+        return self.__filter_one_dim__(filter_value, filter_field,  negative, dim_fields_to_load=fields_to_load)
 
     #####################SUMMARY
     @property
