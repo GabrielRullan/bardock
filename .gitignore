@@ -3,3 +3,6 @@ second_depth.ipynb
 suite.ipynb
 dades/*
 .ipynb_checkpoints/*
+.idea/
+bard/
+mino_repo/__pycache__/
