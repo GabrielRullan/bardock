@@ -279,7 +279,8 @@ class MinoRepo():
         return thread_append
 
     ############FILTERING
-    def __filter_one_dim__(self, filter_value, filter_field, negative=False, dim_fields_to_load=[]):
+    def __filter_one_dim__(self, filter_value, filter_field, negative=False,
+                           dim_fields_to_load=[], fact_fields_to_load = []):
         table_origin_name = self.dim_fields[filter_field]
         table_origin = self.master_tables[table_origin_name]
         _foreign_key = table_origin.index.name
@@ -295,31 +296,46 @@ class MinoRepo():
         index_filter = numpy.nonzero(filter_table == filter_value)[0]
         if negative:
             index_filter = filter_table.index.drop(index_filter)
-        fact_fields_to_load_list = self.fact_fields
+        fact_fields_to_load_list = fact_fields_to_load
+        tables_d = {}
+        tables_f = {}
 
         if len(dim_fields_to_load) > 0:
-            fact_fields_to_load_list.append(_foreign_key)
             tables = set([self.dim_fields[x] for x in dim_fields_to_load])
             tables_d = {}
+            tables_f_dict = {}
             for i in tables:
                 tables_d[i] = [x for x in dim_fields_to_load if self.dim_fields[x] == i]
+                tables_f_dict[i] = [x for x in self.foreignKeys.keys() if i in self.foreignKeys[x]]
+            list_foreign_key = [x[0] for x in {'dim_movie': ['__FK__001'], 'dim_movie_2': ['__FK__002']}.values()]
+            fact_fields_to_load_list = fact_fields_to_load_list + list_foreign_key
 
         fact_fields_to_load = chr(34) + '" , "'.join(fact_fields_to_load_list) + chr(34)
         fact_index_to_filter = numpy.isin(self._fact_table[_foreign_key], index_filter)
         result = self._fact_table.loc[fact_index_to_filter, eval(fact_fields_to_load)]
-        if len(dim_fields_to_load) > 0:
-            print('adding dim columns is not yet well implemented')
+
+        if len(tables_d) > 0:
+            if len(tables_f) > 1:
+                print('adding dim columns is not yet well implemented')
             for table_name in tables_d.keys():
                 table = self.master_tables[table_name]
                 fields_table = tables_d[table_name]
                 result = result.join(table[fields_table], on=table.index.name)
-            # result = result.join(filter_table[dim_fields_to_load], how='left')
+            result = result.drop(axis = 1, columns = list_foreign_key)
         return result
 
-    def filter_facts(self, filter_value, filter_field, fields_to_load=[], negative = False):
+    def filter_facts(self, filter_value, filter_field, fields_to_load=[], negative=False):
+        fact_fields_to_filter = [x for x in self.fact_fields if fields_to_load.count(x) > 0]
+        if len(fact_fields_to_filter) == 0:
+            fact_fields_to_filter = self.fact_fields
+        else:
+            fact_fields_to_filter = [x for x in self.fact_fields if fields_to_load.count(x) > 0]
+        dim_fields_to_load = [x for x in self.dim_fields.keys() if fields_to_load.count(x) > 0]
         if filter_field.__class__ == list:
             print('Function not yet avalaible, please filter a single dim')
-        return self.__filter_one_dim__(filter_value, filter_field,  negative, dim_fields_to_load=fields_to_load)
+        return self.__filter_one_dim__(filter_value, filter_field,  negative,
+                                       dim_fields_to_load=dim_fields_to_load,
+                                       fact_fields_to_load=fact_fields_to_filter)
 
     #####################SUMMARY
     @property
